@@ -1,4 +1,6 @@
-import gulp from 'gulp';
+import Provider from 'react-redux';
+import React from 'react';
+//import gulp from 'gulp';
 import autoprefixer from 'autoprefixer';
 import browserify from 'browserify';
 import watchify from 'watchify';
@@ -21,6 +23,15 @@ import htmlReplace from 'gulp-html-replace';
 import imagemin from 'gulp-imagemin';
 import pngquant from 'imagemin-pngquant';
 import runSequence from 'run-sequence';
+import babel from 'gulp-babel';
+var gulp = require("gulp"),
+    gulpsync = require('gulp-sync')(gulp),
+    gutil = require("gulp-util"),
+    ghPages = require('gulp-gh-pages');
+var env = require('gulp-env'),
+    webpack = require("webpack"),
+    WebpackDevServer = require("webpack-dev-server"),
+    webpackConfigGetter = require('./webpack.config.getter');
 
 const paths = {
   bundle: 'app.js',
@@ -42,6 +53,78 @@ const customOpts = {
 
 const opts = Object.assign({}, watchify.args, customOpts);
 
+gulp.task("default", ["build-dev-server"]);
+
+gulp.task("build-dev-server", sync("set-dev-env", "webpack:dev-server"));
+
+gulp.task("webpack:dev-server", function(callback) {
+  // modify some webpack config options
+  var config = webpackConfigGetter();
+  config.devtool = "eval";
+
+  // Start a webpack-dev-server
+  new WebpackDevServer(webpack(config), {
+    publicPath: paths.publicJsPath,
+    contentBase : paths.publicContentBase,
+    stats: {
+      colors: true
+    }
+  }).listen(8181, "localhost", function(err) {
+    if(err) throw new gutil.PluginError("webpack:dev-server", err);
+    gutil.log("[webpack-dev-server]", "http://localhost:8181");
+  });
+});
+
+gulp.task("build-dev", sync("set-dev-env", "webpack:build-dev"), function() {
+  gulp.watch([paths.jsSources], ["webpack:build-dev"]); 
+});
+
+// create a single instance of the compiler to allow caching
+var devCompiler = null;
+gulp.task("webpack:build-dev", ["set-dev-env"], function(callback) {
+  if(!devCompiler){
+      devCompiler = webpack(webpackConfigGetter());
+  }
+  // run webpack
+  devCompiler.run(function(err, stats) {
+    if(err)
+      throw new gutil.PluginError("webpack:build-dev", err);
+    gutil.log("[webpack:build-dev]", stats.toString({colors: true}));
+    callback();
+  });
+});
+
+gulp.task('set-dev-env', function() {
+  setEnv('DEV');
+});
+
+gulp.task('set-prod-env', function() {
+  setEnv('PROD');
+});
+
+/*** GITHUB PAGES ***/
+
+gulp.task('gh-pages', ["build"], function() {
+  return gulp.src('./public/**/*')
+    .pipe(ghPages());
+});
+
+
+/*** HELPER FUNCTIONS ***/
+
+function setEnv(buildEnv){
+  env({
+    vars: {
+      BUILD_ENV: buildEnv
+    }
+  });
+}
+
+function sync(){
+  return gulpsync.sync([].slice.call(arguments));
+}
+
+
 gulp.task('clean', cb => {
   rimraf('dist', cb);
 });
@@ -55,6 +138,23 @@ gulp.task('browserSync', () => {
     }
   });
 });
+
+// convert jsx to JS
+gulp.task('babelFiles', function() {
+    return gulp.src('js/*.@(js|jsx)')
+        .pipe(babel({
+            compact: false,
+            presets: ['env'],
+            }))
+        .pipe(gulp.dest('js'))
+        .pipe(browserSync.reload({
+            stream: true
+        }));
+});
+
+
+// Default task
+gulp.task('default', ['babelFiles', 'browserSync']);
 
 gulp.task('watchify', () => {
   const bundler = watchify(browserify(opts));
